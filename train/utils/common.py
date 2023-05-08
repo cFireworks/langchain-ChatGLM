@@ -276,6 +276,47 @@ def prepare_args() -> Tuple[ModelArguments, DataTrainingArguments, Seq2SeqTraini
     return model_args, data_args, training_args, finetuning_args
 
 
+def prepare_args_from_dict(arg_dict: dict) -> Tuple[ModelArguments, DataTrainingArguments, Seq2SeqTrainingArguments, FinetuningArguments]:
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, Seq2SeqTrainingArguments, FinetuningArguments))
+    model_args, data_args, training_args, finetuning_args = parser.parse_dict(arg_dict)
+    # Check arguments (do not check finetuning_args since it may be loaded from checkpoints)
+    if int(training_args.do_train) + int(training_args.do_eval) + int(training_args.do_predict) != 1:
+        raise ValueError("We must perform single operation among do_train, do_eval and do_predict.")
+
+    if model_args.quantization_bit is not None and training_args.do_train == False:
+        logger.warning("We do not recommend to evaluaute model in 4/8-bit mode.")
+
+    if not training_args.fp16:
+        logger.warning("We recommend enable fp16 mixed precision training for ChatGLM-6B.")
+
+    training_args.optim = "adamw_torch" if training_args.optim == "adamw_hf" else training_args.optim # suppress warning
+
+    # Set logger
+    if training_args.should_log:
+        # The default of training_args.log_level is passive, so we set log level at info here to have that default.
+        transformers.utils.logging.set_verbosity_info()
+
+    log_level = training_args.get_process_log_level()
+    logger.setLevel(log_level)
+    datasets.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.enable_default_handler()
+    transformers.utils.logging.enable_explicit_format()
+
+    # Log on each process the small summary:
+    logger.warning(
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}\n"
+        + f"  distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+    )
+    logger.info(f"Training/evaluation parameters {training_args}")
+
+    # Set seed before initializing model.
+    transformers.set_seed(training_args.seed)
+
+    return model_args, data_args, training_args, finetuning_args
+
+
+
 def prepare_data(
         model_args: ModelArguments,
         data_args: DataTrainingArguments
@@ -365,7 +406,7 @@ def preprocess_data(
                 query, answer = examples["prompt"][i], examples["response"][i]
                 if examples["query"][i]:
                     query += examples["query"][i]
-                if examples["history"][i]:
+                if "history" in examples and examples["history"][i]:
                     prompt = ""
                     history = examples["history"][i]
                     for i, (old_query, response) in enumerate(history):

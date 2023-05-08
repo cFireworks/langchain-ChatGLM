@@ -165,3 +165,7 @@ class ChatGLM(LLM):
                 print("加载PrefixEncoder模型参数失败")
 
         self.model = self.model.eval()
+
+
+    def remove_model(self):
+        del this.model

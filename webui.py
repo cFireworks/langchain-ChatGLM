@@ -7,7 +7,7 @@ import nltk
 from typing import List
 
 from train.inference import InferencePipeline
-from train.trainer import Trainer
+from train.trainer import GLMTrainer
 
 nltk.data.path = [os.path.join(os.path.dirname(__file__), "nltk_data")] + nltk.data.path
 
@@ -77,6 +77,10 @@ def reinit_model(llm_model, embedding_model, llm_history_len, use_ptuning_v2, to
         print(e)
         model_status = """模型未成功重新加载，请到页面左上角"模型配置"选项卡中重新选择后点击"加载模型"按钮"""
     return history + [[None, model_status]]
+
+
+def remove_model():
+    local_doc_qa.llm.remove_model()
 
 
 def get_vector_store(vs_id, files, history):
@@ -164,46 +168,60 @@ def reload_lora_weight_list() -> dict:
     return gr.update(choices=find_weight_files())
 
 
-def create_training_demo(trainer: Trainer, pipe: InferencePipeline) -> gr.Blocks:
+def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blocks:
     with gr.Blocks() as demo:
         base_model = gr.Dropdown(
             choices=[
                 "THUDM/chatglm-6b",
             ],
             value="THUDM/chatglm-6b",
-            label="Base Model",
+            label="基础模型",
             visible=True,
         )
         resolution = gr.Dropdown(choices=["512"], value="512", label="Resolution", visible=False)
 
         with gr.Row():
             with gr.Box():
-                gr.Markdown("Training Data")
-                concept_images = gr.Files(label="Images for your concept")
-                concept_prompt = gr.Textbox(label="Concept Prompt", max_lines=1)
+                gr.Markdown("训练数据")
+                dataset_files = gr.Files(label="上传训练数据")
                 gr.Markdown(
                     """
-                    - Upload data of the style you are planning on training on.
-                    - For a concept prompt, use a unique, made up word to avoid collisions.
-                    - Guidelines for getting good results:
-                        - Dreambooth for a `Person/Face`:
-                            - 15-50 images of the person from different angles, lighting, and expressions. 
-                            Have considerable photos with close up faces.
-                            - 800-1200 iterations should be good enough.
-                            - good defaults for hyperparams
-                                - Model - `THUDM/chatglm-6b`
-                                - Use/check Prior preservation.
-                                - Number of class images to use - 200
-                                - Prior Loss Weight - 1
-                                - LoRA Rank  - 8
-                                - LoRA Alpha  - 20
-                                - lora dropout - 0
-                                - LoRA Bias  - `all`
-                                - LoRA Rank  - 16
-                                - LoRA Alpha  - 17
-                                - LoRA Bias  - `all`
-                                - lora dropout  - 0
-                                - Uncheck `FP16` and `8bit-Adam` (don't use them for faces)
+                    - 上传训练数据文件为.json格式，示例如下.
+                    [
+                        {
+                            "instruction": "听起来很不错。人工智能可能在哪些方面面临挑战呢？",
+                            "input": "",
+                            "output": "人工智能面临的挑战包括数据隐私、安全和道德方面的问题，以及影响就业机会的自动化等问题。",
+                            "history": [
+                                ["你好，你能帮我解答一个问题吗？", "当然，请问有什么问题？"],
+                                ["我想了解人工智能的未来发展方向，你有什么想法吗？", "人工智能在未来的发展方向可能包括更强大的机器学习算法，更先进的自然语言处理技术，以及更加智能的机器人。"]
+                            ]
+                        },
+                        {
+                            "instruction": "好的，谢谢你！",
+                            "input": "",
+                            "output": "不客气，有其他需要帮忙的地方可以继续问我。",
+                            "history": [
+                                ["你好，能告诉我今天天气怎么样吗？", "当然可以，请问您所在的城市是哪里？"],
+                                ["我在纽约。", "纽约今天晴间多云，气温最高约26摄氏度，最低约18摄氏度，记得注意保暖喔。"]
+                            ]
+                        }
+                        ]
+                    - 模型训练技巧:
+                        - 参数调试建议
+                            - Model - `THUDM/chatglm-6b`
+                            - Use/check Prior preservation.
+                            - Number of class images to use - 200
+                            - Prior Loss Weight - 1
+                            - LoRA Rank  - 8
+                            - LoRA Alpha  - 20
+                            - lora dropout - 0
+                            - LoRA Bias  - `all`
+                            - LoRA Rank  - 16
+                            - LoRA Alpha  - 17
+                            - LoRA Bias  - `all`
+                            - lora dropout  - 0
+                            - Uncheck `FP16` and `8bit-Adam` (don't use them for faces)
                         - Experiment with various values for lora dropouts, enabling/disabling fp16 and 8bit-Adam
                     """
                 )
@@ -212,12 +230,7 @@ def create_training_demo(trainer: Trainer, pipe: InferencePipeline) -> gr.Blocks
                 num_training_steps = gr.Number(label="Number of Training Steps", value=1000, precision=0)
                 learning_rate = gr.Number(label="Learning Rate", value=0.0001)
                 gradient_checkpointing = gr.Checkbox(label="Whether to use gradient checkpointing", value=True)
-                train_text_encoder = gr.Checkbox(label="Train Text Encoder", value=True)
                 with_prior_preservation = gr.Checkbox(label="Prior Preservation", value=True)
-                class_prompt = gr.Textbox(
-                    label="Class Prompt", max_lines=1, placeholder='Example: "a photo of object"'
-                )
-                num_class_images = gr.Number(label="Number of class images to use", value=50, precision=0)
                 prior_loss_weight = gr.Number(label="Prior Loss Weight", value=1.0, precision=1)
                 # use_lora = gr.Checkbox(label="Whether to use LoRA", value=True)
                 lora_r = gr.Number(label="LoRA Rank for unet", value=4, precision=0)
@@ -253,36 +266,31 @@ def create_training_demo(trainer: Trainer, pipe: InferencePipeline) -> gr.Blocks
                     """
                 )
 
-        run_button = gr.Button("Start Training")
+        run_button = gr.Button("开始训练")
         with gr.Box():
             with gr.Row():
-                check_status_button = gr.Button("Check Training Status")
+                check_status_button = gr.Button("训练状态")
                 with gr.Column():
                     with gr.Box():
                         gr.Markdown("Message")
                         training_status = gr.Markdown()
-                    output_files = gr.Files(label="Trained Weight Files and Configs")
+                    output_files = gr.Files(label="训练权重和配置文件")
 
+        run_button.click(fn=remove_model)
         run_button.click(fn=pipe.clear)
-
         run_button.click(
             fn=trainer.run,
             inputs=[
                 base_model,
-                resolution,
                 num_training_steps,
-                concept_images,
-                concept_prompt,
+                dataset_files,
                 learning_rate,
                 gradient_accumulation,
                 fp16,
                 use_8bit_adam,
                 gradient_checkpointing,
-                train_text_encoder,
                 with_prior_preservation,
                 prior_loss_weight,
-                class_prompt,
-                num_class_images,
                 lora_r,
                 lora_alpha,
                 lora_bias,
@@ -304,7 +312,7 @@ def create_training_demo(trainer: Trainer, pipe: InferencePipeline) -> gr.Blocks
 
 model_status = init_model()
 pipe = InferencePipeline()
-trainer = Trainer()
+trainer = GLMTrainer()
 
 with gr.Blocks(css=block_css) as demo:
     vs_path, file_status, model_status, vs_list = gr.State(""), gr.State(""), gr.State(model_status), gr.State(vs_list)
@@ -429,5 +437,5 @@ demo.queue(concurrency_count=3
            ).launch(server_name='0.0.0.0',
                     server_port=7860,
                     show_api=False,
-                    share=False,
-                    inbrowser=False)
+                    share=True,
+                    inbrowser=True)

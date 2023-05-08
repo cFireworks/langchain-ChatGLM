@@ -1,6 +1,7 @@
 from .common import (
     load_pretrained,
     prepare_args,
+    prepare_args_from_dict,
     prepare_data,
     preprocess_data
 )
