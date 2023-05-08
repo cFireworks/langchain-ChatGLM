@@ -26,6 +26,12 @@ REPLY_WITH_SOURCE = False
 class Query(BaseModel):
     query: str
 
+
+class Text(BaseModel):  # 继承了BaseModel，定义了Text的数据格式
+    title: str = ""  # 默认了name的值为None
+    content: str = ""  # 默认了age为18
+
+
 @app.get('/')
 async def document():
     return RedirectResponse(url="/docs")
@@ -90,6 +96,53 @@ async def get_answer(query: str = ""):
     except Exception as err:
         response["message"] = err
         
+    return response
+
+@app.post("/text2vec")
+async def text_2_vec(text: Text):
+    response = {
+        "status": 0,
+        "message": "",
+        "answer": None
+    }
+    try:
+        # todo
+        answer = ""
+    except Exception as err:
+        response["message"] = err
+    
+    return response
+
+
+@app.post("/model/do_train")
+async def do_train_model(text: Text):
+    response = {
+        "status": 0,
+        "message": "",
+        "answer": None
+    }
+    try:
+        # todo
+        answer = ""
+    except Exception as err:
+        response["message"] = err
+    
+    return response
+
+
+@app.post("/model/upload")
+async def upload_model(text: Text):
+    response = {
+        "status": 0,
+        "message": "",
+        "answer": None
+    }
+    try:
+        # todo
+        answer = ""
+    except Exception as err:
+        response["message"] = err
+    
     return response
 
 

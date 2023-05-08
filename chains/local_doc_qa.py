@@ -139,3 +139,9 @@ class LocalDocQA:
         result = knowledge_chain({"query": query})
         self.llm.history[-1][0] = query
         return result, self.llm.history
+    
+    def get_vector_from_text(self, query):
+        docs = []
+        docs.append(query)
+        vector = FAISS.from_documents(docs, self.embeddings)
+
