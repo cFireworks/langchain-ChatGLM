@@ -57,8 +57,8 @@ def update_status(history, status):
 
 def init_model():
     try:
-        # local_doc_qa.init_cfg()
-        # local_doc_qa.llm._call("你好")
+        local_doc_qa.init_cfg()
+        local_doc_qa.llm._call("你好")
         return """模型已成功加载，可以开始对话，或从右侧选择模式后开始对话"""
     except Exception as e:
         print(e)
