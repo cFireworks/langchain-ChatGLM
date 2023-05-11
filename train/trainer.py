@@ -55,23 +55,9 @@ class GLMTrainer:
     def run(
         self,
         base_model: str,
-        n_steps: int,
         dataset_files: list | None,
         learning_rate: float,
-        gradient_accumulation: int,
         fp16: bool,
-        use_8bit_adam: bool,
-        gradient_checkpointing: bool,
-        with_prior_preservation: bool,
-        prior_loss_weight: float,
-        lora_r: int,
-        lora_alpha: int,
-        lora_bias: str,
-        lora_dropout: float,
-        lora_text_encoder_r: int,
-        lora_text_encoder_alpha: int,
-        lora_text_encoder_bias: str,
-        lora_text_encoder_dropout: float,
     ) -> tuple[dict, list[pathlib.Path]]:
         if not torch.cuda.is_available():
             raise gr.Error("CUDA is not available.")
@@ -99,7 +85,7 @@ class GLMTrainer:
             "logging_steps": 10,
             "save_steps": 1000,
             "learning_rate": 5e-5,
-            "num_train_epochs": 1.0,
+            "num_train_epochs": 10.0,
             "fp16": 1
         }
         model_args, data_args, training_args, finetuning_args = prepare_args_from_dict(param_dict)
@@ -168,6 +154,6 @@ class GLMTrainer:
         # todo 判断训练结果
         result_message = "Training Completed!"
 
-        weight_paths = sorted(self.output_dir.glob("*.pt"))
+        weight_paths = sorted(self.output_dir.glob("*.bin"))
         config_paths = sorted(self.output_dir.glob("*.json"))
         return gr.update(value=result_message), weight_paths + config_paths

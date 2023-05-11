@@ -104,6 +104,7 @@ def init_adapter(
             else:
                 checkpoints_to_merge = model_args.checkpoint_dir
 
+            print("checkpoints_to_merge:", checkpoints_to_merge)
             for checkpoint in checkpoints_to_merge: # https://github.com/huggingface/peft/issues/280#issuecomment-1500805831
                 model = PeftModel.from_pretrained(model, checkpoint)
                 model = model.merge_and_unload()
@@ -114,6 +115,7 @@ def init_adapter(
                 model = PeftModel.from_pretrained(model, lastest_checkpoint, is_trainable=True)
 
         if lastest_checkpoint is None: # create new lora weights
+            logger.info("create new lora weights: Lora")
             lora_config = LoraConfig(
                 task_type=TaskType.CAUSAL_LM,
                 inference_mode=False,
@@ -154,6 +156,7 @@ def load_pretrained(
         logger.info("Load fine-tuned model from checkpoint(s): {}".format(",".join(model_args.checkpoint_dir)))
         finetuning_args = torch.load(os.path.join(model_args.checkpoint_dir[0], FINETUNING_ARGS_NAME))
 
+    print("finetuning_args: ", finetuning_args)
     quantization = None
     if model_args.quantization_bit is not None:
         if is_trainable:

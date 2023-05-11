@@ -5,6 +5,7 @@ from chains.local_doc_qa import LocalDocQA
 from configs.model_config import *
 import nltk
 from typing import List
+import pathlib
 
 from train.inference import InferencePipeline
 from train.trainer import GLMTrainer
@@ -80,7 +81,8 @@ def reinit_model(llm_model, embedding_model, llm_history_len, use_ptuning_v2, to
 
 
 def remove_model():
-    local_doc_qa.llm.remove_model()
+    pass
+    # local_doc_qa.llm.remove_model()
 
 
 def get_vector_store(vs_id, files, history):
@@ -187,6 +189,7 @@ def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blo
                 gr.Markdown(
                     """
                     - 上传训练数据文件为.json格式，示例如下.
+                    ```javascript
                     [
                         {
                             "instruction": "听起来很不错。人工智能可能在哪些方面面临挑战呢？",
@@ -206,22 +209,12 @@ def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blo
                                 ["我在纽约。", "纽约今天晴间多云，气温最高约26摄氏度，最低约18摄氏度，记得注意保暖喔。"]
                             ]
                         }
-                        ]
+                    ]
+                    ```
                     - 模型训练技巧:
                         - 参数调试建议
                             - Model - `THUDM/chatglm-6b`
-                            - Use/check Prior preservation.
-                            - Number of class images to use - 200
-                            - Prior Loss Weight - 1
-                            - LoRA Rank  - 8
-                            - LoRA Alpha  - 20
-                            - lora dropout - 0
-                            - LoRA Bias  - `all`
-                            - LoRA Rank  - 16
-                            - LoRA Alpha  - 17
-                            - LoRA Bias  - `all`
-                            - lora dropout  - 0
-                            - Uncheck `FP16` and `8bit-Adam` (don't use them for faces)
+                            - Uncheck `FP16` and `8bit-Adam` 
                         - Experiment with various values for lora dropouts, enabling/disabling fp16 and 8bit-Adam
                     """
                 )
@@ -229,35 +222,17 @@ def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blo
                 gr.Markdown("Training Parameters")
                 num_training_steps = gr.Number(label="Number of Training Steps", value=1000, precision=0)
                 learning_rate = gr.Number(label="Learning Rate", value=0.0001)
-                gradient_checkpointing = gr.Checkbox(label="Whether to use gradient checkpointing", value=True)
-                with_prior_preservation = gr.Checkbox(label="Prior Preservation", value=True)
-                prior_loss_weight = gr.Number(label="Prior Loss Weight", value=1.0, precision=1)
-                # use_lora = gr.Checkbox(label="Whether to use LoRA", value=True)
-                lora_r = gr.Number(label="LoRA Rank for unet", value=4, precision=0)
-                lora_alpha = gr.Number(
-                    label="LoRA Alpha for unet. scaling factor = lora_alpha/lora_r", value=4, precision=0
-                )
-                lora_dropout = gr.Number(label="lora dropout", value=0.00)
-                lora_bias = gr.Dropdown(
-                    choices=["none", "all", "lora_only"],
-                    value="none",
-                    label="LoRA Bias for unet. This enables bias params to be trainable based on the bias type",
-                    visible=True,
-                )
-                lora_text_encoder_r = gr.Number(label="LoRA Rank for CLIP", value=4, precision=0)
-                lora_text_encoder_alpha = gr.Number(
-                    label="LoRA Alpha for CLIP. scaling factor = lora_alpha/lora_r", value=4, precision=0
-                )
-                lora_text_encoder_dropout = gr.Number(label="lora dropout for CLIP", value=0.00)
-                lora_text_encoder_bias = gr.Dropdown(
-                    choices=["none", "all", "lora_only"],
-                    value="none",
-                    label="LoRA Bias for CLIP. This enables bias params to be trainable based on the bias type",
-                    visible=True,
-                )
-                gradient_accumulation = gr.Number(label="Number of Gradient Accumulation", value=1, precision=0)
+
+                # lora_bias = gr.Dropdown(
+                #     choices=["none", "all", "lora_only"],
+                #     value="none",
+                #     label="LoRA Bias for unet. This enables bias params to be trainable based on the bias type",
+                #     visible=True,
+                # )
+                # gradient_accumulation = gr.Number(label="Number of Gradient Accumulation", value=1, precision=0)
                 fp16 = gr.Checkbox(label="FP16", value=True)
-                use_8bit_adam = gr.Checkbox(label="Use 8bit Adam", value=True)
+
+                
                 gr.Markdown(
                     """
                     - It will take about 20-30 minutes to train for 1000 steps with a T4 GPU.
@@ -282,23 +257,9 @@ def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blo
             fn=trainer.run,
             inputs=[
                 base_model,
-                num_training_steps,
                 dataset_files,
                 learning_rate,
-                gradient_accumulation,
                 fp16,
-                use_8bit_adam,
-                gradient_checkpointing,
-                with_prior_preservation,
-                prior_loss_weight,
-                lora_r,
-                lora_alpha,
-                lora_bias,
-                lora_dropout,
-                lora_text_encoder_r,
-                lora_text_encoder_alpha,
-                lora_text_encoder_bias,
-                lora_text_encoder_dropout,
             ],
             outputs=[
                 training_status,
@@ -310,7 +271,8 @@ def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blo
         check_status_button.click(fn=update_output_files, inputs=None, outputs=output_files, queue=False)
     return demo
 
-model_status = init_model()
+# model_status = init_model()
+model_status = """模型未加载，请到页面右侧"模型配置"选项卡中"加载模型"按钮"""
 pipe = InferencePipeline()
 trainer = GLMTrainer()
 

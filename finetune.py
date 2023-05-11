@@ -3,7 +3,7 @@
 # This code is inspired by https://github.com/THUDM/ChatGLM-6B/blob/main/ptuning/main.py
 
 
-from .utils import (
+from train.utils import (
     load_pretrained,
     prepare_args,
     prepare_data,

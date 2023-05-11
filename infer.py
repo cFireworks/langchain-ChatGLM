@@ -7,7 +7,11 @@ import os
 import signal
 import platform
 
-from utils import ModelArguments, load_pretrained
+from train.utils import (
+    ModelArguments, 
+    load_pretrained
+)
+
 from transformers import HfArgumentParser
 
 
