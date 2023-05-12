@@ -2,11 +2,16 @@ import json
 from langchain.llms.base import LLM
 from typing import Optional, List
 from langchain.llms.utils import enforce_stop_tokens
-from transformers import AutoTokenizer, AutoModel, AutoConfig
+from transformers import AutoTokenizer, AutoModel, AutoConfig, HfArgumentParser
 import torch
 from configs.model_config import LLM_DEVICE
 
 from typing import Dict, Tuple, Union, Optional
+
+from train.utils import (
+    ModelArguments, 
+    load_pretrained
+)
 
 DEVICE = LLM_DEVICE
 DEVICE_ID = "0" if torch.cuda.is_available() else None
@@ -99,6 +104,7 @@ class ChatGLM(LLM):
                    model_name_or_path: str = "THUDM/chatglm-6b",
                    llm_device=LLM_DEVICE,
                    use_ptuning_v2=False,
+                   use_lora=False,
                    device_map: Optional[Dict[str, int]] = None,
                    **kwargs):
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -106,6 +112,10 @@ class ChatGLM(LLM):
             trust_remote_code=True
         )
 
+        if use_lora:
+            self.merge_and_load_model()
+            return
+        
         model_config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
 
         if use_ptuning_v2:
@@ -167,5 +177,17 @@ class ChatGLM(LLM):
         self.model = self.model.eval()
 
 
+    def merge_and_load_model(self):
+        arg = ModelArguments()
+        arg.checkpoint_dir = ["/mnt/workspace/langchain-ChatGLM/results"]
+        print(arg)
+
+        model, tokenizer = load_pretrained(arg)
+        model = model.cuda()
+        self.model = model.eval()
+
+    
     def remove_model(self):
-        del this.model
+        if self.model is None:
+            return
+        del self.model

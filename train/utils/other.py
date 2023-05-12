@@ -10,6 +10,7 @@ from transformers.trainer import TRAINER_STATE_NAME
 from transformers.modeling_utils import PreTrainedModel
 
 from peft.utils.other import WEIGHTS_NAME
+import numpy as np
 
 
 IGNORE_INDEX = -100
@@ -151,3 +152,47 @@ def plot_loss(training_args: Seq2SeqTrainingArguments) -> None:
     plt.ylabel("training loss")
     plt.savefig(os.path.join(training_args.output_dir, FIGURE_NAME), format="png", transparent=True, dpi=300)
     print("Figure saved: {}".format(os.path.join(training_args.output_dir, FIGURE_NAME)))
+
+
+def plot_loss_to_image(training_args_output_dir: str) -> None:
+    import matplotlib.pyplot as plt
+    FIGURE_NAME = "trainer_state.png"
+    trainer_state_pth = os.path.join(training_args_output_dir, TRAINER_STATE_NAME)
+    if not os.path.exists(trainer_state_pth):
+        return None
+    data = json.load(open(trainer_state_pth, "r"))
+    if data is None:
+        return None
+    train_steps, train_losses = [], []
+    for i in range(len(data["log_history"]) - 1):
+        train_steps.append(data["log_history"][i]["step"])
+        train_losses.append(data["log_history"][i]["loss"])
+    fig = plt.figure()
+    plt.plot(train_steps, train_losses)
+    plt.title("training loss of {}".format(training_args_output_dir))
+    plt.xlabel("step")
+    plt.ylabel("training loss")
+    return fig2Image(fig)
+
+
+def fig2Image(fig):
+    """
+    fig = plt.figure()
+    image = fig2Image(fig)
+    @brief Convert a Matplotlib figure to a 4D numpy array with RGBA channels and return it
+    @param fig a matplotlib figure
+    @return PIL.Image
+    """
+    import PIL.Image as Image
+    # draw the renderer
+    fig.canvas.draw()
+ 
+    # Get the RGBA buffer from the figure
+    w, h = fig.canvas.get_width_height()
+    buf = np.fromstring(fig.canvas.tostring_argb(), dtype=np.uint8)
+    buf.shape = (w, h, 4)
+ 
+    # canvas.tostring_argb give pixmap in ARGB mode. Roll the ALPHA channel to have it in RGBA mode
+    buf = np.roll(buf, 3, axis=2)
+    image = Image.frombytes("RGBA", (w, h), buf.tostring())
+    return image

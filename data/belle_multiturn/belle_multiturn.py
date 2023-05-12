@@ -1,5 +1,6 @@
 import json
 import datasets
+from typing import Any, Dict, List
 
 
 _DESCRIPTION = "The BELLE multiturn chat dataset for ChatGLM."
@@ -13,7 +14,7 @@ class BelleMultiturn(datasets.GeneratorBasedBuilder):
 
     VERSION = datasets.Version("0.0.0")
 
-    def _info(self):
+    def _info(self) -> datasets.DatasetInfo:
         features = datasets.Features({
             "instruction": datasets.Value("string"),
             "output": datasets.Value("string"),
@@ -27,7 +28,7 @@ class BelleMultiturn(datasets.GeneratorBasedBuilder):
             citation=_CITATION
         )
 
-    def _split_generators(self, dl_manager):
+    def _split_generators(self, dl_manager: datasets.DownloadManager) -> List[datasets.SplitGenerator]:
         file_path = dl_manager.download(_URL)
         return [
             datasets.SplitGenerator(
@@ -38,25 +39,30 @@ class BelleMultiturn(datasets.GeneratorBasedBuilder):
             )
         ]
 
-    def _generate_examples(self, filepath): # generate multi-turn chat for ChatGLM
+    def _generate_examples(self, filepath: str) -> Dict[int, Dict[str, Any]]: # generate multi-turn chat for ChatGLM
         with open(filepath, "r", encoding="utf-8") as f:
             for key, row in enumerate(f):
                 data = json.loads(row)
                 prompt = data["instruction"].strip()
                 response = data["output"].strip()
+
                 assist_idx = prompt.rfind("Assistant:")
                 human_idx = prompt.rfind("Human:")
                 query = prompt[human_idx+6:assist_idx].strip()
                 prompt = prompt[:human_idx].strip()
                 history = []
+
                 while prompt.rfind("Assistant:") != -1:
                     assist_idx = prompt.rfind("Assistant:")
                     human_idx = prompt.rfind("Human:")
                     if human_idx != -1:
-                        history.insert(0, (prompt[human_idx+6:assist_idx].strip(), prompt[assist_idx+10:].strip()))
+                        old_query = prompt[human_idx+6:assist_idx].strip()
+                        old_resp = prompt[assist_idx+10:].strip()
+                        history.insert(0, (old_query, old_resp))
                     else:
                         break
                     prompt = prompt[:human_idx].strip()
+
                 yield key, {
                     "instruction": query,
                     "output": response,

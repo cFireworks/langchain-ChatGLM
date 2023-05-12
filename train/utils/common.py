@@ -76,8 +76,17 @@ def init_adapter(
     if finetuning_args.finetuning_type == "none" and is_trainable:
         raise ValueError("You cannot use finetuning_type=none while training.")
 
+    # 全量微调
+    if finetuning_args.finetuning_type == "full":
+        logger.info("Fine-tuning method: Full")
+        model = model.float()
+        if model_args.checkpoint_dir is not None:
+            load_trainable_params(model, model_args.checkpoint_dir[0])
+    
+    # 部分微调
     if finetuning_args.finetuning_type == "freeze":
         logger.info("Fine-tuning method: Freeze")
+        logger.info("Fine-tuning trainable_layers: {}", finetuning_args.trainable_layers)
         for name, param in model.named_parameters():
             if not any(trainable_layer in name for trainable_layer in finetuning_args.trainable_layers):
                 param.requires_grad_(False)
@@ -87,6 +96,7 @@ def init_adapter(
         if model_args.checkpoint_dir is not None: # freeze only accepts a single checkpoint
             load_trainable_params(model, model_args.checkpoint_dir[0])
 
+    # p-tuning v2 微调
     if finetuning_args.finetuning_type == "p_tuning":
         logger.info("Fine-tuning method: P-Tuning v2")
         model.transformer.prefix_encoder.float() # other parameters are already fixed
@@ -94,6 +104,7 @@ def init_adapter(
         if model_args.checkpoint_dir is not None: # p-tuning v2 only accepts a single checkpoint
             load_trainable_params(model, model_args.checkpoint_dir[0])
 
+    # lora微调
     if finetuning_args.finetuning_type == "lora":
         logger.info("Fine-tuning method: LoRA")
         lastest_checkpoint = None
@@ -127,9 +138,7 @@ def init_adapter(
             model = get_peft_model(model, lora_config)
 
     if not is_trainable:
-        for param in model.parameters():
-            param.requires_grad_(False) # fix all params
-            param.data = param.data.to(torch.float16) # cast all params to float16
+        model = model.half()
 
     return model
 
@@ -151,19 +160,27 @@ def load_pretrained(
 
     if model_args.checkpoint_dir is not None: # load fine-tuned model from checkpoint
         for checkpoint_dir in model_args.checkpoint_dir:
+            print(os.listdir(checkpoint_dir))
             if not os.path.isfile(os.path.join(checkpoint_dir, FINETUNING_ARGS_NAME)):
-                raise ValueError("The fine-tuning arguments are not found in the provided dictionary.")
+                raise ValueError("The fine-tuning arguments are not found in the provided dictionary." + os.path.join(os.path.join(checkpoint_dir, FINETUNING_ARGS_NAME)))
         logger.info("Load fine-tuned model from checkpoint(s): {}".format(",".join(model_args.checkpoint_dir)))
         finetuning_args = torch.load(os.path.join(model_args.checkpoint_dir[0], FINETUNING_ARGS_NAME))
+
+        if finetuning_args.finetuning_type != "lora" and len(model_args.checkpoint_dir) > 1:
+            logger.warning("Only LoRA tuning accepts multiple checkpoints.")
+
+    assert stage == "sft" or finetuning_args.finetuning_type == "lora", "RM and PPO training can only be performed with LoRA method."
 
     print("finetuning_args: ", finetuning_args)
     quantization = None
     if model_args.quantization_bit is not None:
         if is_trainable:
-            if finetuning_args.finetuning_type != "p_tuning":
-                quantization = "hf" # use huggingface's quantization
-            else:
+            if finetuning_args.finetuning_type == "full":
+                raise ValueError("Full parameter fine-tuning does not support quantization.")
+            elif finetuning_args.finetuning_type == "p_tuning":
                 quantization = "cpm" # use cpm's quantization
+            else:
+                quantization = "bnb" # use bnb's quantization
         else:
             quantization = "cpm"
 
@@ -192,16 +209,16 @@ def load_pretrained(
         config.pre_seq_len = finetuning_args.pre_seq_len # enable this will fix other parameters automatically
         config.prefix_projection = finetuning_args.prefix_projection
 
-    # Quantization configurations for Freeze and LoRA in training (using bitsandbytes library).
-    if quantization == "hf":
+    # Quantization configurations for Full, Freeze and LoRA in training (using bitsandbytes library).
+    if quantization == "bnb":
         if model_args.quantization_bit != 8:
-            raise ValueError("Freeze and LoRA fine-tuning only accept 8-bit quantization.")
+            assert model_args.quantization_bit == 8, "Freeze and LoRA fine-tuning only accept 8-bit quantization."
         require_version("bitsandbytes>=0.37.0", "bitsandbytes library is required to use this feature.")
         from bitsandbytes.cuda_setup.main import get_compute_capability, get_cuda_lib_handle, is_cublasLt_compatible
         cuda = get_cuda_lib_handle()
         cc = get_compute_capability(cuda)
-        if not is_cublasLt_compatible(cc):
-            raise ValueError("The current GPU(s) is incompatible with quantization.")
+        assert is_cublasLt_compatible(cc), "The current GPU(s) is incompatible with quantization."
+
         config_kwargs["load_in_8bit"] = True
         config_kwargs["device_map"] = "auto" # it should not be specified outside of load_in_8bit
 
@@ -213,20 +230,29 @@ def load_pretrained(
     # Quantization with the built-in method for P-Tuning v2 training or evaluation.
     # Model parameters should be cast to float16 in quantized P-Tuning setting.
     if quantization == "cpm":
-        if model_args.quantization_bit != 4 and model_args.quantization_bit != 8:
-            raise ValueError("P-Tuning v2 and inference modes only accept 4-bit or 8-bit quantization.")
-        if is_trainable and training_args.fp16:
-            raise ValueError("FP16 training conflicts with cpm quantization.")
-        model = model.quantize(model_args.quantization_bit).half()
+        assert model_args.quantization_bit in [4, 8], "P-Tuning v2 and inference mode only accept 4-bit or 8-bit quantization."
+        assert not (is_trainable and training_args.fp16), "FP16 training conflicts with cpm quantization."
+
+        model = model.quantize(model_args.quantization_bit)
+        for name, param in model.named_parameters():
+            if "prefix_encoder" not in name:
+                param.data = param.data.to(torch.float16) # convert all params in half precision except prefix_encoder
 
     if quantization is not None:
         logger.info("Quantized model to {} bit.".format(model_args.quantization_bit))
 
     if stage == "rwd" or stage == "ppo": # add value head
+        assert is_trainable, "Reward model and PPO model cannot be loaded at evaluation."
+
         model = AutoModelForCausalLMWithValueHead.from_pretrained(model)
         if stage == "ppo": # load reward model
             model.pretrained_model.load_adapter(model_args.reward_model, "reward", is_trainable=False)
             load_valuehead_params(model, model_args.reward_model)
+
+        # Set the parameter _is_int8_training_enabled for the AutoModelForCausalLMWithValueHead model
+        # To meet the compliance requirements of the transformers library
+        if quantization == "bnb":
+            model._is_int8_training_enabled = True
 
     print_trainable_params(model)
 
@@ -427,10 +453,10 @@ def preprocess_data(
             source_ids = tokenizer.encode(text=prompt, add_special_tokens=False)
             target_ids = tokenizer.encode(text=answer, add_special_tokens=False)
 
-            if len(source_ids) > data_args.max_source_length - 1: # gmask token
-                source_ids = source_ids[:data_args.max_source_length - 1]
-            if len(target_ids) > data_args.max_target_length - 2: # bos and eos tokens
-                target_ids = target_ids[:data_args.max_target_length - 2]
+            if len(source_ids) > data_args.max_source_length - 2: # gmask and bos tokens
+                source_ids = source_ids[:data_args.max_source_length - 2]
+            if len(target_ids) > data_args.max_target_length - 1: # eos token
+                target_ids = target_ids[:data_args.max_target_length - 1]
 
             input_ids = tokenizer.build_inputs_with_special_tokens(source_ids, target_ids)
 
@@ -465,12 +491,12 @@ def preprocess_data(
             accept_ids = tokenizer.encode(text=answer[0], add_special_tokens=False)
             reject_ids = tokenizer.encode(text=answer[1], add_special_tokens=False)
 
-            if len(source_ids) > data_args.max_source_length - 1:
-                source_ids = source_ids[:data_args.max_source_length - 1]
-            if len(accept_ids) > data_args.max_target_length - 2:
-                accept_ids = accept_ids[:data_args.max_target_length - 2]
-            if len(reject_ids) > data_args.max_target_length - 2:
-                reject_ids = reject_ids[:data_args.max_target_length - 2]
+            if len(source_ids) > data_args.max_source_length - 2: # gmask and bos tokens
+                source_ids = source_ids[:data_args.max_source_length - 2]
+            if len(accept_ids) > data_args.max_target_length - 1: # eos token
+                accept_ids = accept_ids[:data_args.max_target_length - 1]
+            if len(reject_ids) > data_args.max_target_length - 1: # eos token
+                reject_ids = reject_ids[:data_args.max_target_length - 1]
 
             accept_ids = tokenizer.build_inputs_with_special_tokens(source_ids, accept_ids)
             reject_ids = tokenizer.build_inputs_with_special_tokens(source_ids, reject_ids)
@@ -485,8 +511,8 @@ def preprocess_data(
         for prompt, _ in format_example(examples):
             source_ids = tokenizer.encode(text=prompt, add_special_tokens=False)
 
-            if len(source_ids) > data_args.max_source_length - 1: # gmask token
-                source_ids = source_ids[:data_args.max_source_length - 1]
+            if len(source_ids) > data_args.max_source_length - 2: # gmask and bos tokens
+                source_ids = source_ids[:data_args.max_source_length - 2]
 
             input_ids = tokenizer.build_inputs_with_special_tokens(source_ids)
             model_inputs["input_ids"].append(input_ids)

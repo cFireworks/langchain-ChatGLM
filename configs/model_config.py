@@ -35,3 +35,5 @@ VS_ROOT_PATH = "./vector_store/"
 
 UPLOAD_ROOT_PATH = "./content/"
 
+FINE_TUNED_MODEL_PATH = "./results"
+

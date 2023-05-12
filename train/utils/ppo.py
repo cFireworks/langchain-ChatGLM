@@ -33,13 +33,13 @@ logging.basicConfig(
 
 
 def replace_model(model: AutoModelForCausalLMWithValueHead, target: Literal["default", "reward"]) -> None:
-    if target == "reward":
+    if target == "reward": # save original head temporarily
         valuehead_state_dict = model.v_head.state_dict()
 
         setattr(model, "origin_head_weight", valuehead_state_dict["summary.weight"])
         setattr(model, "origin_head_bias", valuehead_state_dict["summary.bias"])
 
-    model.pretrained_model.set_adapter(target)
+    model.pretrained_model.set_adapter(target) # set the LoRA adapter to be active
     model.v_head.load_state_dict({
         "summary.weight": getattr(model, "{}_head_weight".format(target)),
         "summary.bias": getattr(model, "{}_head_bias".format(target))
@@ -60,7 +60,7 @@ def compute_rewards(
 
     rewards = []
     for i in range(input_ids.size(0)):
-        eos_idx = (input_ids[i] == tokenizer.eos_token_id).nonzero() # Note: checking with eos_token is unsafe
+        eos_idx = (input_ids[i] == tokenizer.eos_token_id).nonzero() # Note: checking with [EOS] token is unsafe
         if len(eos_idx):
             eos_idx = eos_idx[0].item()
         else:
@@ -95,8 +95,6 @@ def cast_layernorm_dtype(
 class PPODataCollatorForChatGLM(DataCollatorWithPadding):
     r"""
     Data collator for ChatGLM. It is capable of dynamically padding for batched data.
-
-    Inspired by: https://github.com/tatsu-lab/stanford_alpaca/blob/65512697dc67779a6e53c267488aba0ec4d7c02a/train.py#L156
     """
     def __init__(
             self,
@@ -107,6 +105,7 @@ class PPODataCollatorForChatGLM(DataCollatorWithPadding):
     ):
         super().__init__(tokenizer, padding=True)
         self.inference_mode = inference_mode
+
         if min_input_length < max_input_length:
             self.input_size = LengthSampler(min_input_length, max_input_length)
         else:
@@ -122,10 +121,12 @@ class PPODataCollatorForChatGLM(DataCollatorWithPadding):
         """
         if self.inference_mode:
             raise NotImplementedError
+
         input_ids = [torch.tensor(feature["input_ids"][:self.input_size()]).flip(0) for feature in features]
         input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
         features = {"input_ids": input_ids.flip(-1)}
         return features
+
 
 class PPOTrainerForChatGLM(PPOTrainer):
     r"""
@@ -159,14 +160,16 @@ class PPOTrainerForChatGLM(PPOTrainer):
         if length_sampler is not None:
             generation_kwargs["max_new_tokens"] = length_sampler()
 
-        response = self.accelerator.unwrap_model(self.model).generate(
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+
+        response = unwrapped_model.generate(
             input_ids=query_tensor, **generation_kwargs
         )
 
         # Temporary hack to ensure the generation config is not initialized for each iteration of the evaluation loop
         # Inspired by: https://github.com/huggingface/transformers/blob/v4.28.1/src/transformers/trainer_seq2seq.py#L273
-        if self.model.pretrained_model.generation_config._from_model_config:
-            self.model.pretrained_model.generation_config._from_model_config = False
+        if unwrapped_model.pretrained_model.generation_config._from_model_config:
+            unwrapped_model.pretrained_model.generation_config._from_model_config = False
 
         self.model, _ = cast_layernorm_dtype(self.model, layer_norm_params)
 
@@ -180,10 +183,9 @@ class PPOTrainerForChatGLM(PPOTrainer):
             start = (query != self.tokenizer.pad_token_id).nonzero()[0].item()
             input_ids.append(torch.cat((query[start:], response, query[:start]))) # change to right-padding
 
-        input_data = self.data_collator([{"input_ids": ids} for ids in input_ids]).to(self.current_device)
-        input_data.pop("labels", None)  # we don't want to compute LM losses
-
-        return input_data
+        model_inputs =  {"input_ids": torch.stack(input_ids, dim=0).to(self.current_device)} # already padded to equal length
+        model_inputs["attention_mask"] = torch.ones_like(model_inputs["input_ids"]) # unused indeed, avoid distributed error
+        return model_inputs
 
     @PPODecorators.empty_cuda_cache()
     def batched_forward_pass(
@@ -216,13 +218,15 @@ class PPOTrainerForChatGLM(PPOTrainer):
             masks = torch.zeros_like(input_ids)
 
             for j in range(fbs):
-                start = (input_ids[j] == self.tokenizer.bos_token_id).nonzero()[0].item()
-                end = (input_ids[j] == self.tokenizer.eos_token_id).nonzero()
+                start = (input_ids[j] == self.tokenizer.bos_token_id).nonzero()[0].item() # always contain a [BOS] token
+                end = (input_ids[j] == self.tokenizer.eos_token_id).nonzero() # Note: checking with [EOS] token is unsafe
                 if len(end):
                     end = end[0].item()
                 else:
                     end = masks.size(1)
                 masks[j][start:end] = 1
+                if end - start < 2:
+                    raise ValueError("Responses are too short. Make sure they are at least 4 tokens long.")
 
             all_logits.append(logits)
             all_values.append(values)
@@ -240,7 +244,8 @@ class PPOTrainerForChatGLM(PPOTrainer):
         self.steps += 1
         self.loss_meter.update(stats["ppo/loss/total"])
         self.reward_meter.update(rewards.sum().item(), n=rewards.size(0))
-        if self.steps % self.training_args.logging_steps == 0:
+
+        if self.steps % self.training_args.logging_steps == 0: # log stats
             print("{{'loss': {:.4f}, 'reward': {:.4f}, 'learning_rate': {:}}}".format(
                 self.loss_meter.avg, self.reward_meter.avg, stats["ppo/learning_rate"]
             ))
@@ -252,13 +257,26 @@ class PPOTrainerForChatGLM(PPOTrainer):
             self.loss_meter.reset()
             self.reward_meter.reset()
 
+        if self.steps % self.training_args.save_steps == 0: # save checkpoint
+            self.save_model(os.path.join(self.training_args.output_dir, f"checkpoint-{self.steps}"))
+
+    def is_world_process_zero(self) -> bool:
+        r"""
+        Whether or not this process is the global main process (when training in a distributed fashion on several
+        machines, this is only going to be `True` for one process).
+        """
+        return self.training_args.process_index == 0
+
     def save_state(self, output_dir: Optional[str] = None) -> None:
         r"""
         Saves trainer state.
         """
+        if not self.is_world_process_zero():
+            return
+
         output_dir = output_dir if output_dir is not None else self.training_args.output_dir
         os.makedirs(output_dir, exist_ok=True)
-        json.dump(self.trainer_state, open(os.path.join(output_dir, TRAINER_STATE_NAME), "w", encoding="utf-8", newline="\n"))
+        json.dump(self.trainer_state, open(os.path.join(output_dir, TRAINER_STATE_NAME), "w", encoding="utf-8", newline="\n"), indent=2)
 
     def save_model(self, output_dir: Optional[str] = None) -> None:
         r"""
@@ -266,14 +284,22 @@ class PPOTrainerForChatGLM(PPOTrainer):
 
         Override to inject custom behavior.
         """
+        if not self.is_world_process_zero():
+            return
+
         output_dir = output_dir if output_dir is not None else self.training_args.output_dir
         os.makedirs(output_dir, exist_ok=True)
         logger.info(f"Saving model checkpoint to {output_dir}")
-        if hasattr(self.model.pretrained_model, "peft_config"): # LoRA
-            self.model.pretrained_model.save_pretrained(output_dir) # only save peft weights with the built-in method
-        else: # Freeze and P-Tuning
-            save_trainable_params(output_dir, self.model.pretrained_model)
-        if hasattr(self.model, "v_head"):
-            save_valuehead_params(output_dir, self.model.v_head) # save valuehead weights
+
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+
+        if hasattr(unwrapped_model.pretrained_model, "peft_config"): # peft methods
+            unwrapped_model.pretrained_model.save_pretrained(output_dir) # save lora weights
+        else: # non-peft methods
+            save_trainable_params(output_dir, unwrapped_model.pretrained_model)
+
+        if hasattr(unwrapped_model, "v_head"):
+            save_valuehead_params(output_dir, unwrapped_model.v_head) # save valuehead weights
+
         torch.save(self.training_args, os.path.join(output_dir, TRAINING_ARGS_NAME))
         torch.save(self.finetuning_args, os.path.join(output_dir, FINETUNING_ARGS_NAME))

@@ -42,12 +42,14 @@ class LocalDocQA:
                  llm_model: str = LLM_MODEL,
                  llm_device=LLM_DEVICE,
                  top_k=VECTOR_SEARCH_TOP_K,
-                 use_ptuning_v2: bool = USE_PTUNING_V2
+                 use_ptuning_v2: bool = USE_PTUNING_V2,
+                 use_lora: bool = False,
                  ):
         self.llm = ChatGLM()
         self.llm.load_model(model_name_or_path=llm_model_dict[llm_model],
                             llm_device=llm_device,
-                            use_ptuning_v2=use_ptuning_v2)
+                            use_ptuning_v2=use_ptuning_v2,
+                            use_lora=use_lora)
         self.llm.history_len = llm_history_len
 
         self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model_dict[embedding_model],
@@ -144,4 +146,10 @@ class LocalDocQA:
         docs = []
         docs.append(query)
         vector = FAISS.from_documents(docs, self.embeddings)
+    
+    
+    def clear_model(self):
+        if self.llm is None:
+            return
+        self.llm.remove_model()
 

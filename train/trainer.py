@@ -31,7 +31,7 @@ class GLMTrainer:
 
         print(self.instance_data_dir)
 
-    def check_if_running(self) -> dict:
+    def check_if_running(self, fintume_model_name) -> dict:
         if self.is_running:
             return gr.update(value=self.is_running_message)
         else:
@@ -41,7 +41,8 @@ class GLMTrainer:
         shutil.rmtree(self.output_dir, ignore_errors=True)
 
     def prepare_dataset(self, dataset_files: list) -> None:
-        self.instance_data_dir.mkdir(parents=True)
+        if not os.path.exists(self.instance_data_dir):
+            self.instance_data_dir.mkdir(parents=True)
 
         dataset_names = []
         for i, temp_path in enumerate(dataset_files):
@@ -57,7 +58,12 @@ class GLMTrainer:
         base_model: str,
         dataset_files: list | None,
         learning_rate: float,
+        num_train_epochs: int,
+        num_save_steps: int,
+        per_device_train_batch_size: int,
         fp16: bool,
+        train_mode: str,
+        output_dir: str,
     ) -> tuple[dict, list[pathlib.Path]]:
         if not torch.cuda.is_available():
             raise gr.Error("CUDA is not available.")
@@ -69,23 +75,28 @@ class GLMTrainer:
             raise gr.Error("You need to upload dataset files.")
 
         
-        self.cleanup_dirs()
+        # self.cleanup_dirs()
         dataset_names = self.prepare_dataset(dataset_files)
         dataset_str = ",".join(dataset_names)
+
+        train_output_dir = self.output_dir
+        if output_dir is not None:
+            train_output_dir = self.output_dir / output_dir
 
         param_dict = {
             "do_train": 1,
             "dataset": dataset_str,
             "dataset_dir": self.instance_data_dir,
-            "finetuning_type": "lora",
-            "output_dir": self.output_dir,
-            "per_device_train_batch_size": 2,
-            "gradient_accumulation_steps": 4,
+            "finetuning_type": train_mode,
+            "output_dir": train_output_dir,
+            "per_device_train_batch_size": per_device_train_batch_size,
+            "gradient_accumulation_steps": 2,
             "lr_scheduler_type": "cosine",
             "logging_steps": 10,
-            "save_steps": 1000,
-            "learning_rate": 5e-5,
-            "num_train_epochs": 10.0,
+            "save_steps": num_save_steps,
+            "warmup_steps": 0,
+            "learning_rate": learning_rate,
+            "num_train_epochs": num_train_epochs,
             "fp16": 1
         }
         model_args, data_args, training_args, finetuning_args = prepare_args_from_dict(param_dict)

@@ -6,6 +6,9 @@ from configs.model_config import *
 import nltk
 from typing import List
 import pathlib
+import PIL.Image
+import shortuuid
+from train.utils import other
 
 from train.inference import InferencePipeline
 from train.trainer import GLMTrainer
@@ -25,13 +28,27 @@ def get_vs_list():
     return os.listdir(VS_ROOT_PATH)
 
 
+def get_fine_tuned_model_list():
+    if not os.path.exists(FINE_TUNED_MODEL_PATH):
+        return []
+    sub_list = os.listdir(FINE_TUNED_MODEL_PATH)
+    sub_list = [f for f in sub_list if os.path.isdir(os.path.join(FINE_TUNED_MODEL_PATH, f)) and f != "training_data"]
+    return sub_list
+
+
 vs_list = ["新建知识库"] + get_vs_list()
+
+fine_tuned_model_list = get_fine_tuned_model_list()
 
 embedding_model_dict_list = list(embedding_model_dict.keys())
 
 llm_model_dict_list = list(llm_model_dict.keys())
 
 local_doc_qa = LocalDocQA()
+
+
+
+
 
 
 def get_answer(query, vs_path, history, mode):
@@ -66,12 +83,13 @@ def init_model():
         return """模型未成功加载，请到页面左上角"模型配置"选项卡中重新选择后点击"加载模型"按钮"""
 
 
-def reinit_model(llm_model, embedding_model, llm_history_len, use_ptuning_v2, top_k, history):
+def reinit_model(llm_model, embedding_model, llm_history_len, use_ptuning_v2, use_lora, top_k, history):
     try:
         local_doc_qa.init_cfg(llm_model=llm_model,
                               embedding_model=embedding_model,
                               llm_history_len=llm_history_len,
                               use_ptuning_v2=use_ptuning_v2,
+                              use_lora=use_lora,
                               top_k=top_k)
         model_status = """模型已成功重新加载，可以开始对话，或从右侧选择模式后开始对话"""
     except Exception as e:
@@ -81,8 +99,8 @@ def reinit_model(llm_model, embedding_model, llm_history_len, use_ptuning_v2, to
 
 
 def remove_model():
-    pass
-    # local_doc_qa.llm.remove_model()
+    local_doc_qa.clear_model()
+    torch.cuda.empty_cache()
 
 
 def get_vector_store(vs_id, files, history):
@@ -116,6 +134,20 @@ def change_mode(mode):
         return gr.update(visible=True)
     else:
         return gr.update(visible=False)
+
+
+def change_train_mode(mode):
+    if mode == "lora":
+        pass
+    else:
+        pass
+
+
+def add_fm_name(fm_name, fm_list):
+    if fm_name in fm_list:
+        fm_name = fm_name+'_'+shortuuid.uuid()
+
+    return gr.update(visible=True, choices= [fm_name] + fm_list, value=fm_name), [fm_name] + fm_list
 
 
 def add_vs_name(vs_name, vs_list, chatbot):
@@ -152,9 +184,13 @@ init_message = """欢迎使用 Private-ChatGLM Web UI！
 知识库暂不支持文件删除，该功能将在后续版本中推出。
 """
 
-def update_output_files() -> dict:
-    paths = sorted(pathlib.Path("results").glob("*.pt"))
-    config_paths = sorted(pathlib.Path("results").glob("*.json"))
+def update_train_loss_image(fintume_model_name) -> PIL.Image:
+    return other.plot_loss_to_image("/mnt/workspace/langchain-ChatGLM/results/" + fintume_model_name)
+
+
+def update_output_files(fintume_model_name) -> dict:
+    paths = sorted(pathlib.Path("results/fintume_model_name").glob("*.bin"))
+    config_paths = sorted(pathlib.Path("results/fintume_model_name").glob("*.json"))
     paths = paths + config_paths
     paths = [path.as_posix() for path in paths]  # type: ignore
     return gr.update(value=paths or None)
@@ -162,7 +198,7 @@ def update_output_files() -> dict:
 
 def find_weight_files() -> List[str]:
     curr_dir = pathlib.Path(__file__).parent
-    paths = sorted(curr_dir.rglob("*.pt"))
+    paths = sorted(curr_dir.rglob("*.bin"))
     return [path.relative_to(curr_dir).as_posix() for path in paths]
 
 
@@ -186,18 +222,21 @@ def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blo
             with gr.Box():
                 gr.Markdown("训练数据")
                 dataset_files = gr.Files(label="上传训练数据")
-                gr.Markdown(
+                gr.Code(
                     """
-                    - 上传训练数据文件为.json格式，示例如下.
-                    ```javascript
+                    // 上传训练数据文件为.json格式，示例如下.
                     [
                         {
                             "instruction": "听起来很不错。人工智能可能在哪些方面面临挑战呢？",
                             "input": "",
                             "output": "人工智能面临的挑战包括数据隐私、安全和道德方面的问题，以及影响就业机会的自动化等问题。",
                             "history": [
-                                ["你好，你能帮我解答一个问题吗？", "当然，请问有什么问题？"],
-                                ["我想了解人工智能的未来发展方向，你有什么想法吗？", "人工智能在未来的发展方向可能包括更强大的机器学习算法，更先进的自然语言处理技术，以及更加智能的机器人。"]
+                                [
+                                    "你好，你能帮我解答一个问题吗？", 
+                                    "当然，请问有什么问题？"],
+                                [
+                                    "我想了解人工智能的未来发展方向，你有什么想法吗？", 
+                                    "人工智能在未来的发展方向可能包括更强大的机器学习算法，更先进的自然语言处理技术，以及更加智能的机器人。"]
                             ]
                         },
                         {
@@ -205,46 +244,48 @@ def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blo
                             "input": "",
                             "output": "不客气，有其他需要帮忙的地方可以继续问我。",
                             "history": [
-                                ["你好，能告诉我今天天气怎么样吗？", "当然可以，请问您所在的城市是哪里？"],
-                                ["我在纽约。", "纽约今天晴间多云，气温最高约26摄氏度，最低约18摄氏度，记得注意保暖喔。"]
+                                [
+                                    "你好，能告诉我今天天气怎么样吗？", 
+                                    "当然可以，请问您所在的城市是哪里？"],
+                                [
+                                    "我在纽约。", 
+                                    "纽约今天晴间多云，气温最高约26摄氏度，最低约18摄氏度，记得注意保暖喔。"]
                             ]
                         }
                     ]
-                    ```
-                    - 模型训练技巧:
-                        - 参数调试建议
-                            - Model - `THUDM/chatglm-6b`
-                            - Uncheck `FP16` and `8bit-Adam` 
-                        - Experiment with various values for lora dropouts, enabling/disabling fp16 and 8bit-Adam
-                    """
+                    """,
+                    language='javascript',
                 )
             with gr.Box():
-                gr.Markdown("Training Parameters")
-                num_training_steps = gr.Number(label="Number of Training Steps", value=1000, precision=0)
-                learning_rate = gr.Number(label="Learning Rate", value=0.0001)
+                with gr.Column():
+                    train_mode = gr.Dropdown(
+                        choices=["lora", "p_tuning", "full", "freeze"],
+                        label="请选择微调训练模式",
+                        value="lora",
+                        visible=True,
+                    )
+                    custom_model_name = gr.Textbox(value=shortuuid.uuid(), label="训练模型保存名称：", lines=1, interactive=True)
+                    gr.Markdown("训练参数")
+                    learning_rate = gr.Number(label="学习率", value=0.0005)
+                    num_train_epochs = gr.Number(label="训练轮次", value=10, precision=0)
+                    num_save_steps = gr.Number(label="保存步数间隔", value=1000, precision=0)
+                    per_device_train_batch_size = gr.Number(label="Batch Size Per GPU", value=2, precision=0)
+                    
 
-                # lora_bias = gr.Dropdown(
-                #     choices=["none", "all", "lora_only"],
-                #     value="none",
-                #     label="LoRA Bias for unet. This enables bias params to be trainable based on the bias type",
-                #     visible=True,
-                # )
-                # gradient_accumulation = gr.Number(label="Number of Gradient Accumulation", value=1, precision=0)
-                fp16 = gr.Checkbox(label="FP16", value=True)
-
-                
-                gr.Markdown(
-                    """
-                    - It will take about 20-30 minutes to train for 1000 steps with a T4 GPU.
-                    - You may want to try a small number of steps first, like 1, to see if everything works fine in your environment.
-                    - Note that your trained models will be deleted when the second training is started. You can upload your trained model in the "Upload" tab.
-                    """
-                )
+                    # lora_bias = gr.Dropdown(
+                    #     choices=["none", "all", "lora_only"],
+                    #     value="none",
+                    #     label="LoRA Bias for unet. This enables bias params to be trainable based on the bias type",
+                    #     visible=True,
+                    # )
+                    # gradient_accumulation = gr.Number(label="Number of Gradient Accumulation", value=1, precision=0)
+                    fp16 = gr.Checkbox(label="FP16", value=True)
 
         run_button = gr.Button("开始训练")
         with gr.Box():
+            check_status_button = gr.Button("训练状态")
             with gr.Row():
-                check_status_button = gr.Button("训练状态")
+                train_loss_image = gr.Image(type='pil')
                 with gr.Column():
                     with gr.Box():
                         gr.Markdown("Message")
@@ -259,7 +300,12 @@ def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blo
                 base_model,
                 dataset_files,
                 learning_rate,
+                num_train_epochs,
+                num_save_steps,
+                per_device_train_batch_size,
                 fp16,
+                train_mode,
+                custom_model_name,
             ],
             outputs=[
                 training_status,
@@ -267,8 +313,14 @@ def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blo
             ],
             queue=False,
         )
-        check_status_button.click(fn=trainer.check_if_running, inputs=None, outputs=training_status, queue=False)
-        check_status_button.click(fn=update_output_files, inputs=None, outputs=output_files, queue=False)
+        if output_files.file_types is not None:
+            run_button.click(
+                fn=add_fm_name,
+                inputs=[custom_model_name, fm_list],
+                outputs=[select_fm_model, fm_list])
+        check_status_button.click(fn=trainer.check_if_running, inputs=custom_model_name, outputs=training_status, queue=False)
+        check_status_button.click(fn=update_output_files, inputs=custom_model_name, outputs=output_files, queue=False)
+        check_status_button.click(fn=update_train_loss_image, inputs=custom_model_name, outputs=train_loss_image, queue=False)
     return demo
 
 # model_status = init_model()
@@ -277,7 +329,7 @@ pipe = InferencePipeline()
 trainer = GLMTrainer()
 
 with gr.Blocks(css=block_css) as demo:
-    vs_path, file_status, model_status, vs_list = gr.State(""), gr.State(""), gr.State(model_status), gr.State(vs_list)
+    vs_path, file_status, model_status, vs_list, fm_list = gr.State(""), gr.State(""), gr.State(model_status), gr.State(vs_list), gr.State(fine_tuned_model_list)
     gr.Markdown(webui_title)
     with gr.Tab("对话"):
         with gr.Row():
@@ -301,9 +353,19 @@ with gr.Blocks(css=block_css) as demo:
                                                     step=1,
                                                     label="LLM 对话轮数",
                                                     interactive=True)
+                        
+                        select_fm_model = gr.Dropdown(
+                            choices=fm_list.value,
+                            label="请选择微调训练模式",
+                            interactive=True,
+                            value=fm_list.value[0] if len(fm_list.value) > 0 else None,)
+
                         use_ptuning_v2 = gr.Checkbox(USE_PTUNING_V2,
                                                     label="使用p-tuning-v2微调过的模型",
                                                     interactive=True)
+                        use_lora = gr.Checkbox(False,
+                                                label="使用基于Lora微调过的模型",
+                                                interactive=True)
                         embedding_model = gr.Radio(embedding_model_dict_list,
                                                 label="Embedding 模型",
                                                 value=EMBEDDING_MODEL,
@@ -377,6 +439,7 @@ with gr.Blocks(css=block_css) as demo:
                                     )
 
     with gr.Tab("知识库管理"):
+        vs_setting_a = gr.Accordion("配置知识库")
         with gr.Row():
             with gr.Column(scale=10):
                 # 知识点清单
@@ -384,14 +447,60 @@ with gr.Blocks(css=block_css) as demo:
             with gr.Column(scale=5):
                 # 选择、添加知识库
                 # 上传知识
-                None
+                with vs_setting_a:
+                    select_vs_a = gr.Dropdown(vs_list.value,
+                                            label="知识库列表",
+                                            interactive=True,
+                                            value=vs_list.value[0] if len(vs_list.value) > 0 else None
+                                            )
+                    vs_name_a = gr.Textbox(label="请输入新建知识库名称",
+                                        lines=1,
+                                        interactive=True)
+                    vs_add_a = gr.Button(value="添加至知识库选项")
+                    vs_add_a.click(fn=add_vs_name,
+                                inputs=[vs_name_a, vs_list, chatbot],
+                                outputs=[select_vs_a, vs_list, chatbot])
+
+                    file2vs_a = gr.Column(visible=False)
+                    with file2vs:
+                        # load_vs = gr.Button("加载知识库")
+                        gr.Markdown("向知识库中添加文件")
+                        with gr.Tab("上传文件"):
+                            files_a = gr.File(label="添加文件",
+                                            file_types=['.txt', '.md', '.docx', '.pdf'],
+                                            file_count="multiple",
+                                            show_label=False
+                                            )
+                            load_file_button_a = gr.Button("上传文件并加载知识库")
+                        with gr.Tab("上传文件夹"):
+                            folder_files_a = gr.File(label="添加文件",
+                                                # file_types=['.txt', '.md', '.docx', '.pdf'],
+                                                file_count="directory",
+                                                show_label=False
+                                                )
+                            load_folder_button_a = gr.Button("上传文件夹并加载知识库")
+                    # load_vs.click(fn=)
+                    select_vs_a.change(fn=change_vs_name_input,
+                                    inputs=select_vs_a,
+                                    outputs=[vs_name_a, vs_add_a, file2vs_a, vs_path])
+                    # 将上传的文件保存到content文件夹下,并更新下拉框
+                    load_file_button_a.click(get_vector_store,
+                                        show_progress=True,
+                                        inputs=[select_vs_a, files_a, chatbot],
+                                        outputs=[vs_path, files_a, chatbot],
+                                        )
+                    load_folder_button_a.click(get_vector_store,
+                                            show_progress=True,
+                                            inputs=[select_vs_a, folder_files_a, chatbot],
+                                            outputs=[vs_path, folder_files_a, chatbot],
+                                            )
 
     with gr.Tab("模型管理"):
         create_training_demo(trainer, pipe)
 
     load_model_button.click(reinit_model,
                             show_progress=True,
-                            inputs=[llm_model, embedding_model, llm_history_len, use_ptuning_v2, top_k, chatbot],
+                            inputs=[llm_model, embedding_model, llm_history_len, use_ptuning_v2, use_lora, top_k, chatbot],
                             outputs=chatbot
                             )
 
