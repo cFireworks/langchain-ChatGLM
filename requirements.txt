@@ -22,4 +22,5 @@ jieba
 rouge_chinese
 gradio
 mdtex2html
+diffusers
 #detectron2@git+https://github.com/facebookresearch/detectron2.git@v0.6#egg=detectron2
