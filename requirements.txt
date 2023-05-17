@@ -1,5 +1,5 @@
 langchain>=0.0.146
-transformers==4.27.1
+transformers>=4.27.4
 unstructured[local-inference]
 layoutparser[layoutmodels,tesseract]
 nltk
@@ -10,5 +10,16 @@ cpm_kernels
 faiss-cpu
 accelerate
 pycocotools
-gradio==3.24.1
+torch>=1.13.1
+protobuf
+cpm_kernels
+sentencepiece
+datasets>=2.10.0
+accelerate>=0.18.0
+peft>=0.3.0
+trl>=0.4.1
+jieba
+rouge_chinese
+gradio
+mdtex2html
 #detectron2@git+https://github.com/facebookresearch/detectron2.git@v0.6#egg=detectron2
