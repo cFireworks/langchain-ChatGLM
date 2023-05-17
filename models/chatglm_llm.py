@@ -103,6 +103,7 @@ class ChatGLM(LLM):
     def load_model(self,
                    model_name_or_path: str = "THUDM/chatglm-6b",
                    llm_device=LLM_DEVICE,
+                   checkpoint_dir=None,
                    use_ptuning_v2=False,
                    use_lora=False,
                    device_map: Optional[Dict[str, int]] = None,
@@ -112,8 +113,8 @@ class ChatGLM(LLM):
             trust_remote_code=True
         )
 
-        if use_lora:
-            self.merge_and_load_model()
+        if checkpoint_dir is not None:
+            self.merge_and_load_model(checkpoint_dir)
             return
         
         model_config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
@@ -177,9 +178,9 @@ class ChatGLM(LLM):
         self.model = self.model.eval()
 
 
-    def merge_and_load_model(self):
+    def merge_and_load_model(self, checkpoint_dir="/mnt/workspace/langchain-ChatGLM/results"):
         arg = ModelArguments()
-        arg.checkpoint_dir = ["/mnt/workspace/langchain-ChatGLM/results"]
+        arg.checkpoint_dir = [checkpoint_dir]
         print(arg)
 
         model, tokenizer = load_pretrained(arg)

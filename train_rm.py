@@ -5,7 +5,7 @@
 # https://github.com/CarperAI/trlx/blob/main/examples/summarize_rlhf/reward_model/train_reward_model_gptj.py
 
 
-from utils import (
+from train.utils import (
     prepare_args,
     prepare_data,
     load_pretrained,

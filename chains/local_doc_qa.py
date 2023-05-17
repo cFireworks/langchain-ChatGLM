@@ -44,10 +44,12 @@ class LocalDocQA:
                  top_k=VECTOR_SEARCH_TOP_K,
                  use_ptuning_v2: bool = USE_PTUNING_V2,
                  use_lora: bool = False,
+                 checkpoint_dir: str = None,
                  ):
         self.llm = ChatGLM()
         self.llm.load_model(model_name_or_path=llm_model_dict[llm_model],
                             llm_device=llm_device,
+                            checkpoint_dir=checkpoint_dir,
                             use_ptuning_v2=use_ptuning_v2,
                             use_lora=use_lora)
         self.llm.history_len = llm_history_len

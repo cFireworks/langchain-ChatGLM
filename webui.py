@@ -21,6 +21,7 @@ VECTOR_SEARCH_TOP_K = 6
 # LLM input history length
 LLM_HISTORY_LEN = 3
 
+LATEST_CHECKPOINT = "openplatform-api-4w-515"
 
 def get_vs_list():
     if not os.path.exists(VS_ROOT_PATH):
@@ -75,7 +76,14 @@ def update_status(history, status):
 
 def init_model():
     try:
-        local_doc_qa.init_cfg()
+        full_checkpoint_dir = os.path.join(FINE_TUNED_MODEL_PATH, LATEST_CHECKPOINT)
+        local_doc_qa.init_cfg(llm_model=LLM_MODEL,
+                              embedding_model=EMBEDDING_MODEL,
+                              llm_history_len=3,
+                              checkpoint_dir=full_checkpoint_dir,
+                              use_ptuning_v2=False,
+                              use_lora=False,
+                              top_k=6)
         local_doc_qa.llm._call("你好")
         return """模型已成功加载，可以开始对话，或从右侧选择模式后开始对话"""
     except Exception as e:
@@ -83,11 +91,13 @@ def init_model():
         return """模型未成功加载，请到页面左上角"模型配置"选项卡中重新选择后点击"加载模型"按钮"""
 
 
-def reinit_model(llm_model, embedding_model, llm_history_len, use_ptuning_v2, use_lora, top_k, history):
+def reinit_model(llm_model, embedding_model, llm_history_len, use_ptuning_v2, use_lora, top_k, history, checkpoint_dir):
     try:
+        full_checkpoint_dir = os.path.join(FINE_TUNED_MODEL_PATH, checkpoint_dir)
         local_doc_qa.init_cfg(llm_model=llm_model,
                               embedding_model=embedding_model,
                               llm_history_len=llm_history_len,
+                              checkpoint_dir=full_checkpoint_dir,
                               use_ptuning_v2=use_ptuning_v2,
                               use_lora=use_lora,
                               top_k=top_k)
@@ -185,6 +195,7 @@ init_message = """欢迎使用 Private-ChatGLM Web UI！
 """
 
 def update_train_loss_image(fintume_model_name) -> PIL.Image:
+    print("update_train_loss_image:" + "/mnt/workspace/langchain-ChatGLM/results/" + fintume_model_name)
     return other.plot_loss_to_image("/mnt/workspace/langchain-ChatGLM/results/" + fintume_model_name)
 
 
@@ -323,8 +334,8 @@ def create_training_demo(trainer: GLMTrainer, pipe: InferencePipeline) -> gr.Blo
         check_status_button.click(fn=update_train_loss_image, inputs=custom_model_name, outputs=train_loss_image, queue=False)
     return demo
 
-# model_status = init_model()
-model_status = """模型未加载，请到页面右侧"模型配置"选项卡中"加载模型"按钮"""
+model_status = init_model()
+# model_status = """模型未加载，请到页面右侧"模型配置"选项卡中"加载模型"按钮"""
 pipe = InferencePipeline()
 trainer = GLMTrainer()
 
@@ -356,9 +367,9 @@ with gr.Blocks(css=block_css) as demo:
                         
                         select_fm_model = gr.Dropdown(
                             choices=fm_list.value,
-                            label="请选择微调训练模式",
+                            label="请选择微调模型",
                             interactive=True,
-                            value=fm_list.value[0] if len(fm_list.value) > 0 else None,)
+                            value=LATEST_CHECKPOINT,)
 
                         use_ptuning_v2 = gr.Checkbox(USE_PTUNING_V2,
                                                     label="使用p-tuning-v2微调过的模型",
@@ -381,8 +392,8 @@ with gr.Blocks(css=block_css) as demo:
                     with gr.Tab("知识库配置"):
                         mode = gr.Radio(["LLM 对话", "知识库问答"],
                                         label="请选择使用模式",
-                                        value="知识库问答", )
-                        vs_setting = gr.Accordion("配置知识库")
+                                        value="LLM 对话", )
+                        vs_setting = gr.Accordion("配置知识库", visible=False)
                         mode.change(fn=change_mode,
                                     inputs=mode,
                                     outputs=vs_setting)
@@ -500,7 +511,7 @@ with gr.Blocks(css=block_css) as demo:
 
     load_model_button.click(reinit_model,
                             show_progress=True,
-                            inputs=[llm_model, embedding_model, llm_history_len, use_ptuning_v2, use_lora, top_k, chatbot],
+                            inputs=[llm_model, embedding_model, llm_history_len, use_ptuning_v2, use_lora, top_k, chatbot, select_fm_model],
                             outputs=chatbot
                             )
 
